@@ -17,10 +17,16 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "ScriptPCH.h"
 #include "ObjectMgr.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
+#include "InstanceScript.h"
+#include "SpellScript.h"
 #include "SpellAuraEffects.h"
+#include "GridNotifiers.h"
+#include "Player.h"
+#include "ObjectAccessor.h"
 #include "dragonsoul.h"
 
 enum Texts
@@ -69,6 +75,7 @@ enum Phases
 };
 
 Position const MorchokSpawnPos = {-1986.09f, -2407.83f, 69.533f, 3.09272f};
+Position const KohcromSpawnPos = {-2015.687012f, -2385.382324f, 70.755798f, 3.09272f};
 
 class boss_morchok : public CreatureScript
 {
@@ -79,9 +86,11 @@ class boss_morchok : public CreatureScript
 		{
 			boss_morchokAI(Creature* creature) : BossAI(creature, DATA_MORCHOK)
 			{
-				_introDone = false;
+				instance = creature->GetInstanceScript();
 			}
 
+			InstanceScript* instance;
+			
 			uint32 BossHealth;
 			uint32 MorchokHealth;
 			uint32 Raid10N;
@@ -104,8 +113,8 @@ class boss_morchok : public CreatureScript
 				me->SetHomePosition(MorchokSpawnPos);
 				me->GetMotionMaster()->MoveTargetedHome();
 				events.SetPhase(PHASE_INTRO);
-				instance->SetData(DATA_MORCHOK_SHARED_HEALTH, MorchokHealth);
 				instance->SetData(DATA_MORCHOK_RAID_HEALTH, MorchokHealth);
+				instance->SetData(DATA_MORCHOK_SHARED_HEALTH, MorchokHealth);
 				instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
 			}
 
@@ -121,10 +130,10 @@ class boss_morchok : public CreatureScript
 						break;
 					case ACTION_SUMMON:
 						DoCast(me, SPELL_CLEAR_DEBUFFS);
-						DoCast(me, SPELL_SUMMON);
+						HeroicModeBoss();
 						break;
 					case ACTION_SUMMON_ORB:
-						DoCast(me, 103639);
+						SummonResonatingCrystal();
 						break;
 					default:
 						break;
@@ -134,6 +143,7 @@ class boss_morchok : public CreatureScript
 			void JustReachedHome() OVERRIDE
 		    {
 		        instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
+		        instance->SetBossState(DATA_MORCHOK, FAIL);
 		        _JustReachedHome();
 		    }
 
@@ -147,6 +157,7 @@ class boss_morchok : public CreatureScript
 				events.ScheduleEvent(EVENT_VORTEX, 71000, 0, PHASE_COMBAT);
 				instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
 				instance->SetBossState(DATA_MORCHOK, IN_PROGRESS);
+				events.SetPhase(PHASE_COMBAT);
 				Talk(SAY_AGGRO);
 			}
 
@@ -155,6 +166,7 @@ class boss_morchok : public CreatureScript
 				_JustDied();
 				Talk(SAY_DEATH);
 				instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
+				instance->SetBossState(DATA_MORCHOK, DONE);
 			}
 
 			void EnterEvadeMode() OVERRIDE
@@ -171,15 +183,27 @@ class boss_morchok : public CreatureScript
 					Talk(SAY_KILL);
 			}
 
-			void JustSummoned(Creature* summon) OVERRIDE
+            void HeroicModeBoss()
             {
-                summons.Summon(summon);
-                summon->SetMaxHealth(me->GetMaxHealth());
-                summon->SetFullHealth();
-                summon->SetHealth(me->GetHealth());
-                summon->setActive(true);
-                summon->setFaction(14);
+            	Creature* Kohcrom = me->SummonCreature(NPC_KOHCROM, KohcromSpawnPos);
+            	Kohcrom->SetMaxHealth(instance->GetData(DATA_MORCHOK_RAID_HEALTH));
+                Kohcrom->SetFullHealth();
+                Kohcrom->SetHealth(me->GetHealth());
+                Kohcrom->setActive(true);
+                Kohcrom->setFaction(14);
             }
+
+            void SummonResonatingCrystal()
+			{
+				Creature* RC = me->SummonCreature(NPC_RESONTAING_CRYSTAL, me->GetPositionX()+15.0f, me->GetPositionY()+15.0f, me->GetPositionZ()+2.0f, 3.09272f);
+				for (uint32 i = 0; i < 4; i++)
+				{
+					Unit* CrystallPlayer = SelectTarget(SELECT_TARGET_RANDOM);
+					DoCast(CrystallPlayer, 103534);
+					RC->AddAura(103534, CrystallPlayer);
+
+				}
+			}
 
             void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
             {
@@ -188,18 +212,42 @@ class boss_morchok : public CreatureScript
             		static bool mobsummoned;
             		if (me->HealthBelowPctDamaged(90, damage) && !mobsummoned)
             		{
+            			me->SetObjectScale(1.0);
             			DoAction(ACTION_SUMMON);
             			mobsummoned = true;
             		}
-            	}
-            	if (me->GetHealth() > damage)
-            		instance->SetData(DATA_MORCHOK_SHARED_HEALTH, me->GetHealth() - damage);
-            }
 
-            void SummonResonatingCrystal()
-			{
-				Creature* ORB = me->SummonCreature(NPC_RESONTAING_CRYSTAL, me->GetPositionX()+15.0f, me->GetPositionY()+15.0f, me->GetPositionZ());
-			}
+            		if (me->GetHealth() > damage)
+	            	{
+	            		instance->SetData(DATA_MORCHOK_SHARED_HEALTH, me->GetHealth() - damage);
+	            	}
+            	}
+
+            	if(me->HealthBelowPctDamaged(80, damage))
+            		{
+            			me->SetObjectScale(0.7);
+            		}
+            	else if(me->HealthBelowPctDamaged(70, damage))
+            		{
+            			me->SetObjectScale(0.6);
+            		}
+            	else if(me->HealthBelowPctDamaged(60, damage))
+            		{
+            			me->SetObjectScale(0.5);
+            		}
+            	else if(me->HealthBelowPctDamaged(50, damage))
+            		{
+            			me->SetObjectScale(0.4);
+            		}
+            	else if(me->HealthBelowPctDamaged(40, damage))
+            		{
+            			me->SetObjectScale(0.3);
+            		}
+            	else if(me->HealthBelowPctDamaged(20, damage))
+            		{
+            			DoCast(me, SPELL_FURIOUS);
+            		}
+            }
 
             void UpdateAI(uint32 diff) OVERRIDE
             {
@@ -207,8 +255,7 @@ class boss_morchok : public CreatureScript
             	if (!UpdateVictim() && !introPhase)
             		return;
 
-            	if (!introPhase)
-            		me->SetHealth(instance->GetData(DATA_MORCHOK_SHARED_HEALTH));
+            	me->SetHealth(instance->GetData(DATA_MORCHOK_SHARED_HEALTH));
 
             	events.Update(diff);
 
@@ -218,29 +265,24 @@ class boss_morchok : public CreatureScript
             		{
             			case EVENT_STOMP:
 							DoCastAOE(SPELL_STOMP);
-							events.ScheduleEvent(EVENT_STOMP, 14000);
+							events.ScheduleEvent(EVENT_STOMP, 14000, PHASE_COMBAT);
 							break;
 						case EVENT_CRUSH:
 							DoCastVictim(SPELL_CRUSH);
-							events.ScheduleEvent(EVENT_CRUSH, 15000);
+							events.ScheduleEvent(EVENT_CRUSH, 15000, PHASE_COMBAT);
 							break;
-						case EVENT_VORTEX:
-							DoCast(me, SPELL_VORTEX);
-							events.ScheduleEvent(EVENT_VORTEX, 71000);
-							break;
+						//case EVENT_VORTEX:
+						//	DoCast(me, SPELL_VORTEX);
+						//	events.ScheduleEvent(EVENT_VORTEX, 71000);
+						//	break;
 						case EVENT_ORB:
-							SummonResonatingCrystal();
-							events.ScheduleEvent(EVENT_ORB, 20000);
+							DoAction(ACTION_SUMMON_ORB);
+							events.ScheduleEvent(EVENT_ORB, 20000, PHASE_COMBAT);
 							break;
 						default:
 							break;
             		}
             	}
-
-            	if((me->GetHealth()*100 / me->GetMaxHealth()) == 20)
-				{
-					DoCast(me, SPELL_FURIOUS);
-				}
 
             	DoMeleeAttackIfReady();
             }
@@ -270,7 +312,6 @@ class npc_kohcrom : public CreatureScript
 			void EnterCombat(Unit* /*who*/) OVERRIDE
 			{
 				DoZoneInCombat();
-				me->SetFullHealth();
 				_events.Reset();
 				_events.ScheduleEvent(EVENT_STOMP, 14000);
 				_events.ScheduleEvent(EVENT_CRUSH, 15000);
@@ -326,7 +367,7 @@ class npc_kohcrom : public CreatureScript
 							_events.ScheduleEvent(EVENT_VORTEX, 71000);
 							break;
 						case EVENT_ORB:
-							SummonResonatingCrystal();
+							DoAction(ACTION_SUMMON_ORB);
 							_events.ScheduleEvent(EVENT_ORB, 20000);
 							break;
 						default:
@@ -362,7 +403,6 @@ class Resonating_Crystal : public CreatureScript
 			Resonating_CrystalAI(Creature* creature) : BossAI(creature, DATA_RESONATING_CRYSTAL)
 			{
 				me->AddAura(103494, me);
-				me->SetObjectScale(0.5);
 				me->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE|UNIT_FLAG_NOT_SELECTABLE|UNIT_FLAG2_UNK1|UNIT_FLAG_DISABLE_MOVE);
 			}
 

@@ -17,17 +17,32 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef DEF_DRAGONSOUL_H
-#define DEF_DRAGONSOUL_H
+#ifndef DEF_DRAGONSOUL_H_
+#define DEF_DRAGONSOUL_H_
 
-
-#include "SpellScript.h"
-#include "Creature.h"
-#include "GameObjectAI.h"
-#include "Map.h"
-#include "CreatureAI.h"
-#include "ObjectMgr.h"
 #define DragonSoulScriptName "instance_dragonsoul"
+
+uint32 const EncounterCount = 8;
+
+enum DataTypes
+{
+	// Bosses Data
+	DATA_MORCHOK 					= 0,
+	DATA_KOHCROME 					= 1,
+	DATA_YORSAHJ 					= 2,
+	DATA_ZONOZZ 					= 3,
+	DATA_HAGARA 					= 4,
+	DATA_ULTRAXION 					= 5,
+	DATA_BLACKHORN 					= 6,
+	DATA_SPINE 						= 7,
+	DATA_MADNESS 					= 8,
+
+	// Data Misc
+
+	DATA_MORCHOK_SHARED_HEALTH 		= 9,
+	DATA_MORCHOK_RAID_HEALTH 		= 10,
+	DATA_RESONATING_CRYSTAL			= 11,
+};
 
 enum DragonSoulBosses
 {
@@ -41,15 +56,6 @@ enum DragonSoulBosses
 	BOSS_BLACKHORN				= 5,
 	BOSS_SPINE					= 6,
 	BOSS_MADNESS				= 7,
-};
-
-enum DataTypes
-{
-	DATA_MORCHOK_SHARED_HEALTH	= 0,
-	DATA_MORCHOK 				= 1,
-	DATA_KOHCROME				= 2,
-	DATA_MORCHOK_RAID_HEALTH	= 3,
-	DATA_RESONATING_CRYSTAL		= 4,
 };
 
 enum CreaturesIds
@@ -100,4 +106,4 @@ CreatureAI* GetDragonSoulAI(Creature* creature)
     return NULL;
 }
 
-#endif
+#endif // DRAGONSOUL_H_

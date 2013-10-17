@@ -17,12 +17,18 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "ObjectMgr.h"
 #include "ScriptMgr.h"
-#include "ScriptedCreature.h"
 #include "InstanceScript.h"
+#include "ScriptedCreature.h"
+#include "Map.h"
+#include "PoolMgr.h"
+#include "AccountMgr.h"
 #include "dragonsoul.h"
 #include "Player.h"
 #include "WorldPacket.h"
+#include "WorldSession.h"
+
 
 class instance_dragonsoul : public InstanceMapScript
 {
@@ -31,26 +37,9 @@ class instance_dragonsoul : public InstanceMapScript
 
 		struct instance_dragonsoul_InstanceMapScript : public InstanceScript
 		{
-			instance_dragonsoul_InstanceMapScript(InstanceMap* map) : InstanceScript(map) { }
-
-			// Creatures
-			uint64 MorchokGUID;
-			uint64 KochromGUID;
-			uint64 ZonozzGUID;
-			uint64 YorsahjGUID;
-			uint64 HagaraGUID;
-			uint64 UltraxionGUID;
-			uint64 BlackhornGUID;
-			uint64 SpineGUID;
-			uint64 MadnessGUID;
-
-			// Misc
-			uint32 TeamInInstance;
-
-			void Initialize() OVERRIDE
+			instance_dragonsoul_InstanceMapScript(InstanceMap* map) : InstanceScript(map) 
 			{
 				SetBossNumber(MAX_ENCOUNTER);
-
 				MorchokGUID				= 0;
 				KochromGUID				= 0;
 				ZonozzGUID 				= 0;
@@ -61,7 +50,6 @@ class instance_dragonsoul : public InstanceMapScript
 				SpineGUID 				= 0;
 				MadnessGUID 			= 0;
 				TeamInInstance 			= 0;
-
 			}
 
 			void OnPlayerEnter(Player* player) OVERRIDE
@@ -113,33 +101,18 @@ class instance_dragonsoul : public InstanceMapScript
 				}
 			}
 
-
-			bool SetBossState(uint32 type, EncounterState state) OVERRIDE
+			std::string GetSaveData()
 			{
-				if (!InstanceScript::SetBossState(type, state))
-					return false;
-
-				switch (type)
-				{
-					case BOSS_MORCHOK:
-					case BOSS_ZONOZZ:
-					case BOSS_YORSAHJ:
-					case BOSS_HAGARA:
-					case BOSS_ULTRAXION:
-					case BOSS_BLACKHORN:
-					case BOSS_SPINE:
-					case BOSS_MADNESS:
-						break;
-				}
-				return true;
+				OUT_SAVE_INST_DATA;
+			
+				std::ostringstream saveStream;
+				saveStream << "H O " << GetBossSaveData();
+			
+				OUT_SAVE_INST_DATA_COMPLETE;
+				return saveStream.str();
 			}
 
-			void SetData64(uint32 /*type*/, uint64 /*data*/) OVERRIDE
-			{
-
-			}
-
-			uint64 GetData64(uint32 data) const OVERRIDE
+			uint64 getData64(uint32 data) const OVERRIDE
 			{
 				switch (data)
 				{
@@ -163,10 +136,56 @@ class instance_dragonsoul : public InstanceMapScript
 						return MadnessGUID;
 
 				}
-
-				return 0;
 			}
 
+			void Load(const char* in)
+			{
+				if (!in)
+				{
+					OUT_LOAD_INST_DATA_FAIL;
+					return;
+				}
+
+				OUT_LOAD_INST_DATA(in);
+
+				char dataHead1, dataHead2;
+				uint16 data0, data1;
+
+				std::istringstream loadStream(in);
+	            loadStream >> dataHead1 >> dataHead2;
+
+	            if (dataHead1 == 'H' && dataHead2 == 'O')
+	            {
+	                for (uint32 i = 0; i < EncounterCount; ++i)
+	                {
+	                    uint32 tmpState;
+	                    loadStream >> tmpState;
+	                    if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
+	                        tmpState = NOT_STARTED;
+	                    SetBossState(i, EncounterState(tmpState));
+	                }
+	                uint32 tmp;
+	                loadStream >> tmp;
+	            }
+	            else
+	                OUT_LOAD_INST_DATA_FAIL;
+
+	            OUT_LOAD_INST_DATA_COMPLETE;
+
+
+			}
+
+		protected:
+			uint64 MorchokGUID;
+			uint64 KochromGUID;
+			uint64 ZonozzGUID;
+			uint64 YorsahjGUID;
+			uint64 HagaraGUID;
+			uint64 UltraxionGUID;
+			uint64 BlackhornGUID;
+			uint64 SpineGUID;
+			uint64 MadnessGUID;
+			uint32 TeamInInstance;
 
         private:
         	EventMap _events;
