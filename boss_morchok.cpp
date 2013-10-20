@@ -34,6 +34,7 @@ enum Texts
 	SAY_AGGRO				= 0,
 	SAY_KILL				= 1,
 	SAY_DEATH				= 2,
+	SAY_SPLIT 				= 3,
 };
 
 enum Spells
@@ -59,6 +60,8 @@ enum Events
 	EVENT_FURIOUS 			= 5,
 	EVENT_ORB 				= 6,
 	EVENT_SHARD 			= 7,
+	EVENT_GET_HP			= 8,
+	EVENT_EV 				= 9,
 };
 
 enum Actions
@@ -84,217 +87,208 @@ class boss_morchok : public CreatureScript
 
 		struct boss_morchokAI : public BossAI
 		{
-			boss_morchokAI(Creature* creature) : BossAI(creature, DATA_MORCHOK)
+			boss_morchokAI(Creature* creature) : BossAI(creature, BOSS_MORCHOK)
 			{
+				InstanceScript* instance;
 				instance = creature->GetInstanceScript();
 			}
 
-			InstanceScript* instance;
-			
-			uint32 BossHealth;
-			uint32 MorchokHealth;
+			uint32 BaseHealth;
 			uint32 Raid10N;
 			uint32 Raid10H;
 			uint32 Raid25N;
 			uint32 Raid25H;
+			uint32 MorchokHealth;
+			uint32 KohcromGUID;
 
 			void Reset() OVERRIDE
 			{
-
 				_Reset();
-				BossHealth = 1000000;
-				Raid10N = BossHealth * 36;
-				Raid10H = BossHealth * 21.473;
-				Raid25N = BossHealth * 102;
-				Raid25H = BossHealth * 90.202;
+				BaseHealth = 1000000;
+				Raid10N = BaseHealth * 36;
+				Raid10H = BaseHealth * 21.473;
+				Raid25N = BaseHealth * 102;
+				Raid25H = BaseHealth * 90.202;
 				MorchokHealth = RAID_MODE(Raid10N, Raid25N, Raid10H, Raid25H);
 				me->SetMaxHealth(MorchokHealth);
 				me->SetFullHealth();
 				me->SetHomePosition(MorchokSpawnPos);
-				me->GetMotionMaster()->MoveTargetedHome();
-				events.SetPhase(PHASE_INTRO);
-				instance->SetData(DATA_MORCHOK_RAID_HEALTH, MorchokHealth);
-				instance->SetData(DATA_MORCHOK_SHARED_HEALTH, MorchokHealth);
-				instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
+                me->GetMotionMaster()->MoveTargetedHome();
+			}
+
+			void EnterCombat(Unit* /*who*/) OVERRIDE
+			{
+				_EnterCombat();
+				Talk(SAY_AGGRO);
+				events.Reset();
+				events.SetPhase(PHASE_COMBAT);
+                events.ScheduleEvent(EVENT_STOMP, 14000, 0, PHASE_COMBAT);
+                events.ScheduleEvent(EVENT_CRUSH, 15000, 0, PHASE_COMBAT);
+                //events.ScheduleEvent(EVENT_VORTEX, 25000, 0, PHASE_COMBAT);
+                events.ScheduleEvent(EVENT_EV, 25000, 0, PHASE_COMBAT);
+                instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
+                instance->SetBossState(DATA_MORCHOK, IN_PROGRESS);
+			}
+
+			void EnterEvadeMode() OVERRIDE
+            {
+            	events.Reset();
+                summons.DespawnAll();
+                me->GetMotionMaster()->MoveTargetedHome();
+                instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me, 1);
+                _EnterEvadeMode();
+            }
+
+			void KilledUnit(Unit* who) OVERRIDE
+			{
+				if (who->GetTypeId() == TYPEID_PLAYER)
+					Talk(SAY_KILL);
+			}
+
+			void JustSummoned(Creature* summoned) OVERRIDE
+			{
+				summons.Summon(summoned);
+
+				if (Unit* target = SelectTarget(SELECT_TARGET_RANDOM, 0, 0.0f, true))
+				{
+					summoned->AI()->AttackStart(target);
+					summoned->AddThreat(target, 250.0f);
+					DoZoneInCombat(summoned);
+				}
+
+				if (summoned->GetEntry() == NPC_KOHCROM)
+				{
+					if (!summoned->IsInCombat() && me->GetVictim())
+						summoned->AI()->AttackStart(me->GetVictim());
+						summoned->SetMaxHealth(MorchokHealth);
+						summoned->SetHealth(me->GetHealth());
+						summoned->setActive(true);
+						summoned->setFaction(14);
+
+					DoZoneInCombat(summoned);
+				}
 			}
 
 			void DoAction(int32 action) OVERRIDE
 			{
 				switch (action)
 				{
-					case ACTION_INTRO:
-						if (_introDone)
-							return;
-						_introDone = true;
-						me->setActive(true);
-						break;
 					case ACTION_SUMMON:
 						DoCast(me, SPELL_CLEAR_DEBUFFS);
-						HeroicModeBoss();
+						DoCast(me, SPELL_SUMMON);
+						Talk(SAY_SPLIT);
 						break;
+
 					case ACTION_SUMMON_ORB:
-						SummonResonatingCrystal();
+						events.ScheduleEvent(EVENT_ORB, 20000);
 						break;
 					default:
 						break;
 				}
 			}
 
-			void JustReachedHome() OVERRIDE
-		    {
-		        instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
-		        instance->SetBossState(DATA_MORCHOK, FAIL);
-		        _JustReachedHome();
-		    }
-
-			void EnterCombat(Unit* /*who*/) OVERRIDE
+			void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
 			{
-				_EnterCombat();
-				events.Reset();
-				events.SetPhase(PHASE_COMBAT);
-				events.ScheduleEvent(EVENT_STOMP, 14000, 0, PHASE_COMBAT);
-				events.ScheduleEvent(EVENT_CRUSH, 15000, 0, PHASE_COMBAT);
-				events.ScheduleEvent(EVENT_VORTEX, 71000, 0, PHASE_COMBAT);
-				instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
-				instance->SetBossState(DATA_MORCHOK, IN_PROGRESS);
-				events.SetPhase(PHASE_COMBAT);
-				Talk(SAY_AGGRO);
+				if(IsHeroic())
+				{
+					static bool mobsummoned;
+					if (me->HealthBelowPctDamaged(90, damage) && !mobsummoned)
+					{
+						DoAction(ACTION_SUMMON);
+						mobsummoned = true;
+					}
+				}
+				else
+				{
+				}
+
+				if(me->HealthBelowPctDamaged(80, damage))
+                {
+                	me->SetObjectScale(0.7);
+                }
+                else if(me->HealthBelowPctDamaged(70, damage))
+                {
+                	me->SetObjectScale(0.6);
+                }
+                else if(me->HealthBelowPctDamaged(60, damage))
+                {
+                	me->SetObjectScale(0.5);
+                }
+                else if(me->HealthBelowPctDamaged(50, damage))
+                {
+                	me->SetObjectScale(0.4);
+                }
+                else if(me->HealthBelowPctDamaged(40, damage))
+                {
+                	me->SetObjectScale(0.3);
+                }
+                else if(me->HealthBelowPctDamaged(20, damage))
+                {
+                	DoCast(me, SPELL_FURIOUS);
+                }
 			}
 
 			void JustDied(Unit* /*killer*/) OVERRIDE
 			{
 				_JustDied();
-				Talk(SAY_DEATH);
 				instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
-				instance->SetBossState(DATA_MORCHOK, DONE);
+                instance->SetBossState(DATA_MORCHOK, DONE);
+				Talk(SAY_DEATH);
 			}
 
-			void EnterEvadeMode() OVERRIDE
+			void UpdateAI(uint32 diff) OVERRIDE
 			{
-				events.Reset();
-				summons.DespawnAll();
-				me->GetMotionMaster()->MoveTargetedHome();
-				_EnterEvadeMode();
-			}
+				if (!UpdateVictim())
+					return;
 
-			void KilledUnit(Unit* victim) OVERRIDE
-			{
-				if (victim->GetTypeId() == TYPEID_PLAYER)
-					Talk(SAY_KILL);
-			}
+				events.Update(diff);
 
-            void HeroicModeBoss()
-            {
-            	Creature* Kohcrom = me->SummonCreature(NPC_KOHCROM, KohcromSpawnPos);
-            	Kohcrom->SetMaxHealth(instance->GetData(DATA_MORCHOK_RAID_HEALTH));
-                Kohcrom->SetFullHealth();
-                Kohcrom->SetHealth(me->GetHealth());
-                Kohcrom->setActive(true);
-                Kohcrom->setFaction(14);
-            }
+				if (me->HasUnitState(UNIT_STATE_CASTING))
+					return;
 
-            void SummonResonatingCrystal()
-			{
-				Creature* RC = me->SummonCreature(NPC_RESONTAING_CRYSTAL, me->GetPositionX()+15.0f, me->GetPositionY()+15.0f, me->GetPositionZ()+2.0f, 3.09272f);
-				for (uint32 i = 0; i < 4; i++)
+				while (uint32 eventId = events.ExecuteEvent())
 				{
-					Unit* CrystallPlayer = SelectTarget(SELECT_TARGET_RANDOM);
-					DoCast(CrystallPlayer, 103534);
-					RC->AddAura(103534, CrystallPlayer);
-
-				}
-			}
-
-            void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
-            {
-            	if(IsHeroic())
-            	{
-            		static bool mobsummoned;
-            		if (me->HealthBelowPctDamaged(90, damage) && !mobsummoned)
-            		{
-            			me->SetObjectScale(1.0);
-            			DoAction(ACTION_SUMMON);
-            			mobsummoned = true;
-            		}
-
-            		if (me->GetHealth() > damage)
-	            	{
-	            		instance->SetData(DATA_MORCHOK_SHARED_HEALTH, me->GetHealth() - damage);
-	            	}
-            	}
-
-            	if(me->HealthBelowPctDamaged(80, damage))
-            		{
-            			me->SetObjectScale(0.7);
-            		}
-            	else if(me->HealthBelowPctDamaged(70, damage))
-            		{
-            			me->SetObjectScale(0.6);
-            		}
-            	else if(me->HealthBelowPctDamaged(60, damage))
-            		{
-            			me->SetObjectScale(0.5);
-            		}
-            	else if(me->HealthBelowPctDamaged(50, damage))
-            		{
-            			me->SetObjectScale(0.4);
-            		}
-            	else if(me->HealthBelowPctDamaged(40, damage))
-            		{
-            			me->SetObjectScale(0.3);
-            		}
-            	else if(me->HealthBelowPctDamaged(20, damage))
-            		{
-            			DoCast(me, SPELL_FURIOUS);
-            		}
-            }
-
-            void UpdateAI(uint32 diff) OVERRIDE
-            {
-            	bool introPhase = events.IsInPhase(PHASE_INTRO);
-            	if (!UpdateVictim() && !introPhase)
-            		return;
-
-            	me->SetHealth(instance->GetData(DATA_MORCHOK_SHARED_HEALTH));
-
-            	events.Update(diff);
-
-            	while (uint32 eventId = events.ExecuteEvent())
-            	{
-            		switch (eventId)
-            		{
-            			case EVENT_STOMP:
+					switch (eventId)
+					{
+						case EVENT_STOMP:
 							DoCastAOE(SPELL_STOMP);
-							events.ScheduleEvent(EVENT_STOMP, 14000, PHASE_COMBAT);
+							events.ScheduleEvent(EVENT_STOMP, 14000);
 							break;
+
 						case EVENT_CRUSH:
 							DoCastVictim(SPELL_CRUSH);
-							events.ScheduleEvent(EVENT_CRUSH, 15000, PHASE_COMBAT);
+							events.ScheduleEvent(EVENT_CRUSH, 15000);
 							break;
-						//case EVENT_VORTEX:
-						//	DoCast(me, SPELL_VORTEX);
-						//	events.ScheduleEvent(EVENT_VORTEX, 71000);
-						//	break;
+
 						case EVENT_ORB:
 							DoAction(ACTION_SUMMON_ORB);
-							events.ScheduleEvent(EVENT_ORB, 20000, PHASE_COMBAT);
+							events.ScheduleEvent(EVENT_ORB, 20000);
 							break;
-						default:
+
+						//case EVENT_VORTEX:
+						//	DoCast(me, SPELL_VORTEX);
+						//	events.ScheduleEvent(EVENT_VORTEX, 25000);
+						//	events.ScheduleEvent(EVENT_EV, 2000);
+						//	break;
+
+						case EVENT_EV:
+							DoCast(me, 103176);
+							DoCast(me, 103851);
+							events.ScheduleEvent(EVENT_EV, 25000);
 							break;
-            		}
-            	}
+					}
+				}
 
-            	DoMeleeAttackIfReady();
-            }
+				DoMeleeAttackIfReady();
+			}
 
-        private:
-        	bool _introDone;
+
 		};
 
 		CreatureAI* GetAI(Creature* creature) const OVERRIDE
-		{
-			return GetDragonSoulAI<boss_morchokAI>(creature);
-		}
+        {
+        	return GetDragonSoulAI<boss_morchokAI>(creature);
+        }
 };
 
 class npc_kohcrom : public CreatureScript
@@ -304,137 +298,141 @@ class npc_kohcrom : public CreatureScript
 
 		struct npc_kohcromAI : public ScriptedAI
 		{
-			npc_kohcromAI(Creature* creature) : ScriptedAI(creature),
-				_instance(creature->GetInstanceScript())
+			npc_kohcromAI(Creature* creature) : ScriptedAI(creature)
 			{
+				_instance = creature->GetInstanceScript();
 			}
+
+			uint32 MorchokGUID;
 
 			void EnterCombat(Unit* /*who*/) OVERRIDE
-			{
-				DoZoneInCombat();
-				_events.Reset();
-				_events.ScheduleEvent(EVENT_STOMP, 14000);
-				_events.ScheduleEvent(EVENT_CRUSH, 15000);
-				_events.ScheduleEvent(EVENT_VORTEX, 71000);
-				_instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
-				_instance->SetBossState(DATA_KOHCROME, IN_PROGRESS);
-			}
+            {
+            	DoZoneInCombat();
+            	_events.Reset();
+            	_events.ScheduleEvent(EVENT_STOMP, 14000);
+            	_events.ScheduleEvent(EVENT_CRUSH, 15000);
+            	_events.ScheduleEvent(EVENT_VORTEX, 71000);
+            	_instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
+            }
 
-			void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
-			{
-				if (_instance && me->GetHealth() > damage)
-					_instance->SetData(DATA_MORCHOK_SHARED_HEALTH, me->GetHealth() - damage);
-			}
+            void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
+            {
 
-			void JustDied(Unit* killer) OVERRIDE
-			{
-				_instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
-				if (_instance)
-					if (Creature* morchok = ObjectAccessor::GetCreature(*me, _instance->GetData64(DATA_MORCHOK)))
-						killer->Kill(morchok);
-			}
+                if(me->HealthBelowPctDamaged(80, damage))
+                {
+                	me->SetObjectScale(0.7);
+                }
+                else if(me->HealthBelowPctDamaged(70, damage))
+                {
+                	me->SetObjectScale(0.6);
+                }
+                else if(me->HealthBelowPctDamaged(60, damage))
+                {
+                	me->SetObjectScale(0.5);
+                }
+                else if(me->HealthBelowPctDamaged(50, damage))
+                {
+                	me->SetObjectScale(0.4);
+                }
+                else if(me->HealthBelowPctDamaged(40, damage))
+                {
+                	me->SetObjectScale(0.3);
+                }
+                else if(me->HealthBelowPctDamaged(20, damage))
+                {
+                	DoCast(me, SPELL_FURIOUS);
+                }
+            }
 
-			void SummonResonatingCrystal()
-			{
-				me->SummonCreature(NPC_RESONTAING_CRYSTAL, me->GetPositionX()+15.0f, me->GetPositionY()+15.0f, me->GetPositionZ());
-			}
+            void JustDied(Unit* killer) OVERRIDE
+            {
+            	_instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
+            	if (_instance)
+                	if (Creature* morchok = ObjectAccessor::GetCreature(*me, _instance->GetData64(DATA_MORCHOK)))
+                    	killer->Kill(morchok);
+            }
 
-			void UpdateAI(uint32 diff) OVERRIDE
+            void UpdateAI(uint32 diff) OVERRIDE
 			{
 				if (!UpdateVictim())
 					return;
 
-				if (_instance)
-					me->SetMaxHealth(_instance->GetData(DATA_MORCHOK_RAID_HEALTH));
-					me->SetHealth(_instance->GetData(DATA_MORCHOK_SHARED_HEALTH));
-
 				_events.Update(diff);
 
+				if (me->HasUnitState(UNIT_STATE_CASTING))
+					return;
+
 				while (uint32 eventId = _events.ExecuteEvent())
-                {
-                    switch (eventId)
-                    {
-                    	case EVENT_STOMP:
+				{
+					switch (eventId)
+					{
+						case EVENT_STOMP:
 							DoCastAOE(SPELL_STOMP);
 							_events.ScheduleEvent(EVENT_STOMP, 14000);
 							break;
+
 						case EVENT_CRUSH:
 							DoCastVictim(SPELL_CRUSH);
 							_events.ScheduleEvent(EVENT_CRUSH, 15000);
 							break;
-						case EVENT_VORTEX:
-							DoCast(me, SPELL_VORTEX);
-							_events.ScheduleEvent(EVENT_VORTEX, 71000);
-							break;
+
 						case EVENT_ORB:
 							DoAction(ACTION_SUMMON_ORB);
 							_events.ScheduleEvent(EVENT_ORB, 20000);
 							break;
-						default:
-							break;
-                    }
-                }
-
-                if((me->GetHealth()*100 / me->GetMaxHealth()) == 20)
-				{
-					DoCast(me, SPELL_FURIOUS);
+					}
 				}
-                DoMeleeAttackIfReady();
+
+				DoMeleeAttackIfReady();
 			}
 
 		private:
-			EventMap _events;
-			InstanceScript* _instance;
-		};
+        	EventMap _events;
+        	InstanceScript* _instance;
+        };
 
-		CreatureAI* GetAI(Creature* creature) const OVERRIDE
-		{
-			return GetDragonSoulAI<npc_kohcromAI>(creature);
-		}
+        CreatureAI* GetAI(Creature* creature) const OVERRIDE
+        {
+        	return GetDragonSoulAI<npc_kohcromAI>(creature);
+        }
 };
 
-class Resonating_Crystal : public CreatureScript
+class BlackBloodOfEarthFilter
 {
 	public:
-		Resonating_Crystal() : CreatureScript("Resonating_Crystal") { }
+		explicit BlackBloodOfEarthFilter(Unit* caster) : _caster(caster) { }
 
-		struct Resonating_CrystalAI : public BossAI
+		bool operator()(WorldObject* unit) const
 		{
-			Resonating_CrystalAI(Creature* creature) : BossAI(creature, DATA_RESONATING_CRYSTAL)
-			{
-				me->AddAura(103494, me);
-				me->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE|UNIT_FLAG_NOT_SELECTABLE|UNIT_FLAG2_UNK1|UNIT_FLAG_DISABLE_MOVE);
-			}
+			return !unit->IsWithinLOSInMap(_caster);
+		}
+	private:
+		Unit* _caster;
+};
 
-			void EnterCombat(Unit* /*who*/)
-			{
-				events.ScheduleEvent(EVENT_SHARD, 1000);
-			}
+class spell_morchok_bboe : public SpellScriptLoader
+{
+    public:
+        spell_morchok_bboe() : SpellScriptLoader("spell_morchok_bboe") { }
 
-			void UpdateAI(uint32 diff)
-			{
-				while (uint32 eventId = events.ExecuteEvent())
-				{
-					switch (eventId)
-					{
-						case EVENT_SHARD:
-							for (int i = 0; i < 4; i = i + 1)
-							{
-								if (Unit* target = SelectTarget(SELECT_TARGET_RANDOM, 4))
-								{
-									DoCast(target, 103528);
-									me->AddAura(SPELL_FAR, target);
-								}
-							}
-							break;
-					}
-				}
-			}
-		};
-
-		CreatureAI* GetAI(Creature* creature) const
+        class spell_morchok_bboe_SpellScript : public SpellScript
         {
-            return new Resonating_CrystalAI(creature);
+            PrepareSpellScript(spell_morchok_bboe_SpellScript);
+
+            void FilterTargets(std::list<WorldObject*>& targets)
+            {
+                targets.remove_if(BlackBloodOfEarthFilter(GetCaster()));
+            }
+
+            void Register() OVERRIDE
+            {
+                OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_morchok_bboe_SpellScript::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENEMY);
+            }
+        };
+
+        SpellScript* GetSpellScript() const OVERRIDE
+        {
+            return new spell_morchok_bboe_SpellScript();
         }
 };
 
@@ -442,5 +440,5 @@ void AddSC_boss_morchok()
 {
 	new boss_morchok();
 	new npc_kohcrom();
-	new Resonating_Crystal();
+	new spell_morchok_bboe();
 }
