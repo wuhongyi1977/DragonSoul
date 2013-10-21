@@ -334,9 +334,6 @@ class npc_kohcrom : public CreatureScript
 
             void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
             {
-            	if (!me || !me->isAlive())
-            		return;
-
             	_instance->SetData(DATA_KOHCROM_HEALTH, me->GetHealth() >= damage ? me->GetHealth() - damage : 0);
 
                 if(me->HealthBelowPctDamaged(80, damage))
