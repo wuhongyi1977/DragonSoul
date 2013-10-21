@@ -28,7 +28,7 @@ enum DataTypes
 {
 	// Bosses Data
 	DATA_MORCHOK 					= 0,
-	DATA_KOHCROME 					= 1,
+	DATA_KOHCROM 					= 1,
 	DATA_YORSAHJ 					= 2,
 	DATA_ZONOZZ 					= 3,
 	DATA_HAGARA 					= 4,
@@ -39,8 +39,8 @@ enum DataTypes
 
 	// Data Misc
 
-	DATA_MORCHOK_SHARED_HEALTH 		= 9,
-	DATA_MORCHOK_RAID_HEALTH 		= 10,
+	DATA_MORCHOK_HEALTH      		= 9,
+	DATA_KOHCROM_HEALTH      		= 10,
 	DATA_RESONATING_CRYSTAL			= 11,
 };
 

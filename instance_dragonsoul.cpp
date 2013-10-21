@@ -112,7 +112,7 @@ class instance_dragonsoul : public InstanceMapScript
 				return saveStream.str();
 			}
 
-			uint64 getData64(uint32 data) const OVERRIDE
+			uint64 GetData64(uint32 data) const OVERRIDE
 			{
 				switch (data)
 				{

@@ -128,6 +128,9 @@ class boss_morchok : public CreatureScript
                 events.ScheduleEvent(EVENT_EV, 25000, 0, PHASE_COMBAT);
                 instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
                 instance->SetBossState(DATA_MORCHOK, IN_PROGRESS);
+
+                // Beta
+                instance->SetData(DATA_MORCHOK_HEALTH, me->GetHealth());
 			}
 
 			void EnterEvadeMode() OVERRIDE
@@ -197,6 +200,11 @@ class boss_morchok : public CreatureScript
 						DoAction(ACTION_SUMMON);
 						mobsummoned = true;
 					}
+
+					if(mobsummoned)
+					{
+						instance->SetData(DATA_MORCHOK_HEALTH, me->GetHealth() >= damage ? me->GetHealth() - damage : 0);
+					}
 				}
 				else
 				{
@@ -240,6 +248,12 @@ class boss_morchok : public CreatureScript
 			{
 				if (!UpdateVictim())
 					return;
+
+				if (IsHeroic())
+				{
+					if (me->GetHealth() > instance->GetData(DATA_KOHCROM_HEALTH) && instance->GetData(DATA_KOHCROM_HEALTH) != 0)
+						me->SetHealth(instance->GetData(DATA_KOHCROM_HEALTH));
+				}
 
 				events.Update(diff);
 
@@ -313,10 +327,17 @@ class npc_kohcrom : public CreatureScript
             	_events.ScheduleEvent(EVENT_CRUSH, 15000);
             	_events.ScheduleEvent(EVENT_VORTEX, 71000);
             	_instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
+
+            	// Beta
+            	_instance->SetData(DATA_KOHCROM_HEALTH, me->GetHealth());
             }
 
             void DamageTaken(Unit* /*attacker*/, uint32& damage) OVERRIDE
             {
+            	if (!me || !me->isAlive())
+            		return;
+
+            	_instance->SetData(DATA_KOHCROM_HEALTH, me->GetHealth() >= damage ? me->GetHealth() - damage : 0);
 
                 if(me->HealthBelowPctDamaged(80, damage))
                 {
@@ -347,15 +368,16 @@ class npc_kohcrom : public CreatureScript
             void JustDied(Unit* killer) OVERRIDE
             {
             	_instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
-            	if (_instance)
-                	if (Creature* morchok = ObjectAccessor::GetCreature(*me, _instance->GetData64(DATA_MORCHOK)))
-                    	killer->Kill(morchok);
+            	_instance->SetData(DATA_KOHCROM_HEALTH, 0);
             }
 
             void UpdateAI(uint32 diff) OVERRIDE
 			{
 				if (!UpdateVictim())
 					return;
+
+				if (me->GetHealth() > _instance->GetData(DATA_MORCHOK_HEALTH) && _instance->GetData(DATA_MORCHOK_HEALTH) != 0)
+					me->SetHealth(_instance->GetData(DATA_MORCHOK_HEALTH));
 
 				_events.Update(diff);
 
